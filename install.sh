@@ -6,7 +6,7 @@ echo "Starting Work Tracker installation..."
 
 # Define paths
 BIN_DIR="$HOME/.local/bin"
-SCRIPT_URL="https://raw.githubusercontent.com/YOUR_USERNAME/worktracker/main/work"
+SCRIPT_URL="https://raw.githubusercontent.com/tanaybhomia/worktracker/main/work"
 DEST_FILE="$BIN_DIR/work"
 
 # 1. Create local bin directory if it doesn't exist
