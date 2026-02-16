@@ -1,8 +1,9 @@
 Note: Ensure ~/.local/bin is added to your $PATH in your .bashrc or .zshrc.
-Usage Guide
+
+## Usage Guide
 
 Run work help at any time for a quick reference.
-Core Tracking
+### Core Tracking
 
     work start "Project Name" : Starts a standard timer.
 
@@ -14,7 +15,7 @@ Core Tracking
 
     work pause / work resume : Pauses or resumes the active timer.
 
-Analytics & Visuals
+### Analytics & Visuals
 
     work status : Displays the currently running or paused task.
 
@@ -26,7 +27,7 @@ Analytics & Visuals
 
     work calendar : Displays a work heatmap for the current month.
 
-Project & Data Management
+### Project & Data Management
 
     work archive "Project Name" : Moves a project to the archive to declutter your menus.
 
@@ -40,7 +41,7 @@ Project & Data Management
 
     work goal global 8 : Sets your global daily work goal (e.g., 8 hours).
 
-Data Storage
+### Data Storage
 
 Work Tracker stores all of its data in your home directory: ~/.worktracker/.
 
@@ -50,7 +51,7 @@ Work Tracker stores all of its data in your home directory: ~/.worktracker/.
 
     worklog_*.bak : Rolling automatic backups of your main CSV file.
 
-License
+### License
 
 MIT License
 
