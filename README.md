@@ -1,3 +1,6 @@
+# **WORK**
+<img width="1362" height="965" alt="image" src="https://github.com/user-attachments/assets/025a7583-7707-4c6b-8558-9f960c31101e" />
+
 Note: Ensure ~/.local/bin is added to your $PATH in your .bashrc or .zshrc.
 
 ## Usage Guide
