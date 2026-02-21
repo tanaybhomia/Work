@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # -----------------------------------------------------
-# Work Tracker v12.2 (Dashboards, Timeflow, & Bling)
+# Work Tracker v12.2.3 (Cleaned & Patched)
 # Features: Pomodoro, ETA, Switch, Auto-Backups, Archive
 # -----------------------------------------------------
 
@@ -194,16 +194,17 @@ run_session() {
         cp "$DATA_FILE" "$DATA_DIR/worklog_$(date +%s).bak"
         ls -t "$DATA_DIR"/worklog_*.bak 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
         
-        # --- NEW: Save Exact Timestamps ---
-        local start_hhmm end_hhmm start_date_stamp
+        local end_time=$(( start_time + (dur * 60) ))
+        local start_date_stamp start_hhmm end_hhmm
+        
         if [[ "$OSTYPE" == "darwin"* ]]; then
             start_date_stamp=$(date -r "$start_time" +%Y-%m-%d)
             start_hhmm=$(date -r "$start_time" +%H:%M)
-            end_hhmm=$(date -v+${dur}M -r "$start_time" +%H:%M)
+            end_hhmm=$(date -r "$end_time" +%H:%M)
         else
             start_date_stamp=$(date -d "@$start_time" +%Y-%m-%d)
             start_hhmm=$(date -d "@$start_time" +%H:%M)
-            end_hhmm=$(date -d "@$start_time + $dur minutes" +%H:%M)
+            end_hhmm=$(date -d "@$end_time" +%H:%M)
         fi
         
         echo "$start_date_stamp,$project,$dur,$tag,$note,$start_hhmm,$end_hhmm" >> "$DATA_FILE"
@@ -300,14 +301,13 @@ show_timeflow() {
 
 # --- NEW: LIVE DASHBOARD ---
 show_dashboard() {
-    tput civis # Hide cursor
-    tput smcup # Save terminal state
+    tput civis
+    tput smcup
     tput clear
     trap 'tput rmcup; tput cnorm; exit 0' SIGINT SIGTERM
     
     while true; do
-        tput cup 0 0 # Move to top left without full clear (prevents flicker)
-        
+        tput cup 0 0
         local out=""
         out+="\n  ${bold}${c_accent}⚡ LIVE DASHBOARD${reset}\n"
         out+="  ────────────────────────────────────────────\n\n"
@@ -316,7 +316,6 @@ show_dashboard() {
         local goal=$(get_global_goal)
         local goal_m=$(( goal * 60 ))
         
-        # 1. Timer Status
         if [ -f "$STATE_FILE" ]; then
             IFS=',' read -r project start_time tag mode pid session_goal pomo_len < "$STATE_FILE"
             local elapsed_sec=$(( $(date +%s) - start_time ))
@@ -331,7 +330,6 @@ show_dashboard() {
             out+="  ${c_subtle}⚪ IDLE: No active timer.${reset}\n"
         fi
         
-        # 2. Daily Progress Bar
         local pct=$(( (today_mins * 100) / goal_m ))
         [ $pct -gt 100 ] && pct=100
         local width=30
@@ -342,23 +340,64 @@ show_dashboard() {
         
         out+="\n  ${bold}Daily Goal:${reset} $((today_mins/60))h $((today_mins%60))m / ${goal}h\n"
         out+="  ${c_success}${bar_str}${c_subtle}${empty_str}${reset} ${bold}${pct}%${reset}\n"
-        
         out+="\n  ────────────────────────────────────────────\n"
         
-        # 3. Print Output and clear whatever is underneath it
         echo -e "$out"
-        
-        # 4. Append Timeflow (already styled)
         show_timeflow "$(date +%Y-%m-%d)"
-        
-        tput ed # Clear to end of screen (handles resizing nicely)
+        tput ed
         sleep 1
     done
 }
 
+# --- ANALYTICS REPORTS ---
+list_projects() {
+    echo -e "\n  ${bold}${c_accent}📂 PROJECT DIRECTORY${reset}"
+    echo "  ──────────────────────────────────────────"
+    
+    local raw_data
+    raw_data=$(awk -F',' -v arch_file="$ARCHIVE_FILE" '
+        BEGIN { while((getline < arch_file) > 0) arch[$0]=1 }
+        NR>1 {
+            p = $2; sub(/\r$/, "", p)
+            if (p == "") next
+            if (p in arch) { arch_entries[p]++; arch_sum[p]+=$3 }
+            else { entries[p]++; sum[p]+=$3 }
+        }
+        END {
+            for (p in sum) printf "%s|%d|%d|active\n", p, entries[p], sum[p]
+            for (p in arch_sum) printf "%s|%d|%d|archived\n", p, arch_entries[p], arch_sum[p]
+        }
+    ' "$DATA_FILE" | sort -t'|' -k3 -nr)
+    
+    local active_list="" archived_list="" has_archived=0
+    
+    while IFS='|' read -r name count mins status; do
+        [ -z "$name" ] && continue
+        local hours=$(echo "scale=1; $mins / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $mins/60}")
+        local formatted_line
+        
+        if [ "$status" == "archived" ]; then
+            printf -v formatted_line "  ${dim}%-20s %3d sessions  %6s h${reset}\n" "${name:0:20}" "$count" "$hours"
+            archived_list+="$formatted_line"
+            has_archived=1
+        else
+            printf -v formatted_line "  ${bold}%-20s${reset} ${dim}%3d sessions${reset}  ${c_success}%6s h${reset}\n" "${name:0:20}" "$count" "$hours"
+            active_list+="$formatted_line"
+        fi
+    done <<< "$raw_data"
+    
+    echo -e "  ${bold}ACTIVE PROJECTS${reset}"
+    if [ -n "$active_list" ]; then echo -ne "$active_list"; else echo "  ${dim}No active projects.${reset}"; fi
+    
+    if [ $has_archived -eq 1 ]; then
+        echo "  ──────────────────────────────────────────"
+        echo -e "  ${dim}ARCHIVED PROJECTS${reset}"
+        echo -ne "$archived_list"
+    fi
+    echo "  ──────────────────────────────────────────"
+    echo ""
+}
 
-# --- ANALYTICS REPORTS (Unchanged Logic, Minified) ---
-list_projects() { echo -e "\n  ${bold}${c_accent}📂 PROJECT DIRECTORY${reset}\n  ──────────────────────────────────────────"; awk -F',' -v arch_file="$ARCHIVE_FILE" -v bld="$bold" -v res="$reset" -v dim="$dim" -v suc="$c_success" 'BEGIN { while((getline < arch_file) > 0) arch[$0]=1 } NR>1 { if ($2 in arch) { arch_entries[$2]++; arch_sum[$2]+=$3 } else { entries[$2]++; sum[$2]+=$3 } } END { print "  " bld "ACTIVE PROJECTS" res; for (p in sum) { printf "%s|%d|%d|active\n", p, entries[p], sum[p] } has_arch = 0; for (p in arch_sum) { has_arch = 1; break }; if (has_arch) { print "SPLIT_MARKER"; print "  \n  " dim "ARCHIVED PROJECTS" res; for (p in arch_sum) { printf "%s|%d|%d|archived\n", p, arch_entries[p], arch_sum[p] } } }' "$DATA_FILE" | sort -t'|' -k3 -nr | while read -r line; do if [[ "$line" == *"PROJECTS"* ]]; then echo -e "$line"; elif [[ "$line" == "SPLIT_MARKER" ]]; then echo "  ──────────────────────────────────────────"; else IFS='|' read -r name count mins status <<< "$line"; local hours=$(echo "scale=1; $mins / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $mins/60}"); if [ "$status" == "archived" ]; then printf "  ${dim}%-20s %3d sessions  %6s h${reset}\n" "${name:0:20}" "$count" "$hours"; else printf "  ${bold}%-20s${reset} ${dim}%3d sessions${reset}  ${c_success}%6s h${reset}\n" "${name:0:20}" "$count" "$hours"; fi; fi; done; echo "  ──────────────────────────────────────────"; echo ""; }
 show_chart() { echo -e "\n  ${bold}${c_accent}📈 ACTIVITY CHART (Last 7 Days)${reset}\n  ────────────────────────────────────────"; local dates=""; if [[ "$OSTYPE" == "darwin"* ]]; then for i in {6..0}; do dates="$dates $(date -v-${i}d +%Y-%m-%d)"; done; else for i in {6..0}; do dates="$dates $(date -d "$i days ago" +%Y-%m-%d)"; done; fi; local max_min=0; declare -A day_sum; for d in $dates; do local s=$(awk -F',' -v d="$d" '$1==d {sum+=$3} END{print sum+0}' "$DATA_FILE"); day_sum[$d]=$s; if (( s > max_min )); then max_min=$s; fi; done; [ "$max_min" -eq 0 ] && max_min=1; for d in $dates; do local val=${day_sum[$d]}; local day_name=$(date -d "$d" +%a 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%a); local bar_len=$(( (val * 30) / max_min )); local bar=""; for ((i=0; i<bar_len; i++)); do bar+="█"; done; if [ "$val" -gt 0 ] && [ "$bar_len" -eq 0 ]; then bar="▌"; fi; local color=$c_success; if [ "$val" -gt 300 ]; then color=$c_accent; fi; if [ "$val" -gt 480 ]; then color=$c_warn; fi; local hours=$(echo "scale=1; $val / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $val/60}"); printf "  ${dim}%s %s${reset} | ${color}%-30s${reset} ${bold}%s h${reset}\n" "$d" "$day_name" "$bar" "$hours"; done; echo "  ────────────────────────────────────────\n"; }
 show_tags_report() { local filter="${1:-all}"; local start_date="1970-01-01"; local title="ALL-TIME TAGS"; case "$filter" in today) start_date=$(date +%Y-%m-%d); title="TODAY'S TAGS" ;; week) start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d); title="WEEKLY TAGS" ;; month) start_date=$(date +%Y-%m-01); title="MONTHLY TAGS" ;; esac; echo -e "\n  ${bold}${c_accent}🏷️  $title${reset} ${dim}($filter)${reset}\n  ${c_subtle}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"; awk -F',' -v s="$start_date" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= s { t = ($4 == "") ? "No Tag" : $4; sum[t] += $3; total += $3 } END { if (total==0) { print "  No data."; exit } for (t in sum) { pct = (sum[t]/total)*100; printf "  %-12s %3dh %02dm %s(%d%%)%s\n", substr(t,1,12), int(sum[t]/60), sum[t]%60, acc, pct, res } print ""; print "  TOTAL: " int(total/60) "h " total%60 "m" }' "$DATA_FILE" | sort -nr -k 2; echo ""; }
 show_weekly_report() { if [[ "$OSTYPE" == "darwin"* ]]; then local target_dow=$(date +%u); local diff=$((target_dow - 1)); local start_week=$(date -v-${diff}d +%Y-%m-%d); else local start_week=$(date -d "last monday" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d); if [ "$(date +%u)" -eq 1 ]; then start_week=$(date +%Y-%m-%d); fi; fi; echo -e "\n  ${bold}${c_accent}📅 WEEKLY LOG${reset} ${dim}(Since $start_week)${reset}\n  ────────────────────────────────────────────────────────────"; printf "  ${bold}%-12s %-15s %-10s %-10s %s${reset}\n" "Date" "Project" "Time" "Tag" "Note"; echo "  ────────────────────────────────────────────────────────────"; awk -F',' -v start="$start_week" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= start { h = int($3/60); m = $3%60; time = sprintf("%dh %02dm", h, m); printf "  %-12s %-15s %-10s %-10s %s\n", $1, substr($2,1,14), time, substr($4,1,9), substr($5,1,25); total_min += $3 } END { print "  ────────────────────────────────────────────────────────────"; printf "  TOTAL: " acc "%.1f Hours" res "\n", total_min/60 }' "$DATA_FILE"; echo ""; }
@@ -377,7 +416,7 @@ show_help() {
  |__/|__/\____/_/  /_/|_| /_/ /_/   \__,_/\___/_/|_|\___/_/     
 EOF
     echo -e "${reset}"
-    echo -e "    ${dim}v12.2 - CLI Time Tracking for Power Users${reset}\n"
+    echo -e "    ${dim}v12.2.3 - CLI Time Tracking for Power Users${reset}\n"
     
     echo -e "    ${bold}CORE COMMANDS${reset}"
     echo -e "      ${c_success}start${reset} [proj]    Start timer. ${dim}(Flags: --pomo 50, --tag coding, --goal 2)${reset}"
@@ -421,16 +460,16 @@ case "$1" in
         IFS=',' read -r old_proj start_time tag mode pid session_goal pomo_len < "$STATE_FILE"
         duration=$(( ($(date +%s) - start_time) / 60 ))
         if [ "$duration" -ge 5 ]; then
-            # Generate exact time signatures for switch
+            local end_time=$(( start_time + (duration * 60) ))
             local start_hhmm end_hhmm start_date_stamp
             if [[ "$OSTYPE" == "darwin"* ]]; then
                 start_date_stamp=$(date -r "$start_time" +%Y-%m-%d)
                 start_hhmm=$(date -r "$start_time" +%H:%M)
-                end_hhmm=$(date -v+${duration}M -r "$start_time" +%H:%M)
+                end_hhmm=$(date -r "$end_time" +%H:%M)
             else
                 start_date_stamp=$(date -d "@$start_time" +%Y-%m-%d)
                 start_hhmm=$(date -d "@$start_time" +%H:%M)
-                end_hhmm=$(date -d "@$start_time + $duration minutes" +%H:%M)
+                end_hhmm=$(date -d "@$end_time" +%H:%M)
             fi
             echo "$start_date_stamp,$old_proj,$duration,$tag,Switched to $new_proj,$start_hhmm,$end_hhmm" >> "$DATA_FILE"
             echo "✅ Saved: $old_proj ($duration m)"
@@ -441,7 +480,6 @@ case "$1" in
         rm -f "$STATE_FILE"; [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
         exec "$0" start "$new_proj" "$@" ;;
 
-    # --- NEW: Dashboard & Timeflow triggers ---
     dash|dashboard) show_dashboard ;;
     day|timeflow) show_timeflow "$2" ;;
 
@@ -463,14 +501,20 @@ case "$1" in
         fi ;;
 
     archive)
-        [ -z "$2" ] && echo "Usage: work archive [Project]" && exit 1
-        if grep -qx "$2" "$ARCHIVE_FILE" 2>/dev/null; then echo "⚠️  '$2' is already archived."
-        else echo "$2" >> "$ARCHIVE_FILE"; echo "📦 Archived: $2"; fi ;;
+        shift
+        if [ -z "$1" ]; then echo "Usage: work archive [Project]..."; exit 1; fi
+        for p in "$@"; do
+            if grep -qx "$p" "$ARCHIVE_FILE" 2>/dev/null; then echo "⚠️  '$p' is already archived."
+            else echo "$p" >> "$ARCHIVE_FILE"; echo "📦 Archived: $p"; fi
+        done ;;
         
     unarchive)
-        [ -z "$2" ] && echo "Usage: work unarchive [Project]" && exit 1
-        if [[ "$OSTYPE" == "darwin"* ]]; then sed -i '' "/^$2$/d" "$ARCHIVE_FILE"; else sed -i "/^$2$/d" "$ARCHIVE_FILE"; fi
-        echo "♻️  Unarchived: $2" ;;
+        shift
+        if [ -z "$1" ]; then echo "Usage: work unarchive [Project]..."; exit 1; fi
+        for p in "$@"; do
+            if [[ "$OSTYPE" == "darwin"* ]]; then sed -i '' "/^$p$/d" "$ARCHIVE_FILE"; else sed -i "/^$p$/d" "$ARCHIVE_FILE"; fi
+            echo "♻️  Unarchived: $p"
+        done ;;
 
     edit)
         ${EDITOR:-nano} "$DATA_FILE"
@@ -492,7 +536,7 @@ case "$1" in
             run_session "$project" "$tag" "$mode" "$session_goal" "$elapsed" "$pomo_len"; exit 0
         fi
         last_entry=$(tail -n 1 "$DATA_FILE")
-        if [ -z "$last_entry" ] || [ "$last_entry" == "date,project,minutes,tag,note" ]; then echo "⚠️  No history to resume."; exit 1; fi
+        if [ -z "$last_entry" ] || [ "$last_entry" == "date,project,minutes,tag,note,start_time,end_time" ]; then echo "⚠️  No history to resume."; exit 1; fi
         last_proj=$(echo "$last_entry" | awk -F',' '{print $2}'); last_tag=$(echo "$last_entry" | awk -F',' '{print $4}')
         echo "🔄 Starting new session for: ${bold}$last_proj${reset}"
         run_session "$last_proj" "$last_tag" "standard" "" "" "25" ;;
@@ -508,22 +552,23 @@ case "$1" in
             echo -e "${c_warn}Stopping:${reset} $project ($duration min)"
             notify_user "✅ Finished: $project ($duration min)"
             read -e -p "📝 Note: " note
-            note=$(echo "$note" | tr ',' ';') # Clean commas
+            note=$(echo "$note" | tr ',' ';') 
             
             cp "$DATA_FILE" "$DATA_DIR/worklog.bak"
             cp "$DATA_FILE" "$DATA_DIR/worklog_$(date +%s).bak"
             ls -t "$DATA_DIR"/worklog_*.bak 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null
             
-            # Generate exact time signatures
+            local end_time=$(( start_time + (duration * 60) ))
             local start_hhmm end_hhmm start_date_stamp
+            
             if [[ "$OSTYPE" == "darwin"* ]]; then
                 start_date_stamp=$(date -r "$start_time" +%Y-%m-%d)
                 start_hhmm=$(date -r "$start_time" +%H:%M)
-                end_hhmm=$(date -v+${duration}M -r "$start_time" +%H:%M)
+                end_hhmm=$(date -r "$end_time" +%H:%M)
             else
                 start_date_stamp=$(date -d "@$start_time" +%Y-%m-%d)
                 start_hhmm=$(date -d "@$start_time" +%H:%M)
-                end_hhmm=$(date -d "@$start_time + $duration minutes" +%H:%M)
+                end_hhmm=$(date -d "@$end_time" +%H:%M)
             fi
             
             echo "$start_date_stamp,$project,$duration,$tag,$note,$start_hhmm,$end_hhmm" >> "$DATA_FILE"
