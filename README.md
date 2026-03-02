@@ -58,8 +58,6 @@ Work Tracker stores all of its data in your home directory: ~/.worktracker/.
 
 MIT License
 
-Once that is pushed and looks good on your GitHub page, let me know. We can immediately start building the Daily Timeline view (work day)!
-
 
 ##### TODO / Future Improv
 - Gamification (p2)
