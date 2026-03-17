@@ -1,5 +1,5 @@
 # **WORK**
-<img width="1362" height="965" alt="image" src="https://github.com/user-attachments/assets/025a7583-7707-4c6b-8558-9f960c31101e" />
+<img width="1638" height="998" alt="image" src="https://github.com/user-attachments/assets/725add77-2fc0-4ce3-b0d5-fb46c8cafcde" />
 
 Note: Ensure ~/.local/bin is added to your $PATH in your .bashrc or .zshrc.
 
