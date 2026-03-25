@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # -----------------------------------------------------
-# Work Tracker v13.0 (Clean Developer Edition)
+# Work Tracker v13.0 (Clean Developer Edition - Spacebar Mod)
 # Features: Pomodoro, ETA, Switch, Auto-Backups, Archive
 # -----------------------------------------------------
 
@@ -130,7 +130,7 @@ draw_timer_screen() {
             status_msg="${c_warn}[BREAK PHASE]${reset}"; status_len=13
          fi
     else 
-        status_msg="${dim}(Ctrl+C for options)${reset}"; status_len=20
+        status_msg="${dim}(Press SPACE to pause)${reset}"; status_len=22
     fi
     print_c $((center_row + 8)) "$status_msg" $status_len
     printf "\033[%d;1H" $lines
@@ -216,17 +216,17 @@ run_session() {
         for ((i=0; i<6; i++)); do printf "\033[%d;1H\033[K" $((menu_row + i)); done
         
         local pad1=$(( (cols - 12) / 2 )); [ $pad1 -lt 0 ] && pad1=0
-        local pad2=$(( (cols - 30) / 2 )); [ $pad2 -lt 0 ] && pad2=0
+        local pad2=$(( (cols - 34) / 2 )); [ $pad2 -lt 0 ] && pad2=0
         
         printf "\033[%d;1H\033[K%*s%b" "$menu_row" "$pad1" "" "${bold}${c_warn}TIMER PAUSED${reset}"
-        printf "\033[%d;1H\033[K%*s%b" $((menu_row + 2)) "$pad2" "" "${bold}[P]${reset}ause   ${bold}[S]${reset}top   ${bold}[C]${reset}ontinue"
+        printf "\033[%d;1H\033[K%*s%b" $((menu_row + 2)) "$pad2" "" "${bold}[P]${reset}ause   ${bold}[S]${reset}top   ${bold}[Space]${reset} Resume"
         
         while true; do
-            read -r -s -n 1 key < /dev/tty
+            IFS= read -r -s -n 1 key < /dev/tty
             case "$key" in
                 p|P) pause_session_internal ;;
                 s|S) save_and_exit ;;
-                c|C|$'\e'|"") 
+                c|C|$'\e'|" "|"") 
                     tput clear
                     draw_timer_screen "$elapsed" "$project" "$mode" "$pct" "$label" "$pomo_len"
                     break 
@@ -281,7 +281,12 @@ run_session() {
 
         set_window_title "⏱ $(format_time $elapsed) - $project"
         draw_timer_screen "$elapsed" "$project" "$mode" "$pct" "$label" "$pomo_len"
-        read -t 1 -n 1 _ignore < /dev/tty || true
+        
+        # New Spacebar listener
+        IFS= read -r -s -t 1 -n 1 key < /dev/tty || true
+        if [[ "$key" == " " ]]; then
+            confirm_exit
+        fi
     done
 }
 
@@ -413,7 +418,7 @@ list_projects() {
     done <<< "$raw_data"
     
     echo -e "  ${bold}ACTIVE PROJECTS${reset}"
-    if [ -n "$active_list" ]; then echo -ne "$active_list"; else echo "  ${dim}No active projects.${reset}\n"; fi
+    if [ -n "$active_list" ]; then echo -ne "$active_list"; else echo -e "  ${dim}No active projects.${reset}\n"; fi
     
     if [ $has_archived -eq 1 ]; then
         echo "  ──────────────────────────────────────────────────"
@@ -424,7 +429,7 @@ list_projects() {
     echo ""
 }
 
-show_chart() { echo -e "\n  ${bold}${c_accent}ACTIVITY CHART (Last 7 Days)${reset}\n  ──────────────────────────────────────────────────"; local dates=""; if [[ "$OSTYPE" == "darwin"* ]]; then for i in {6..0}; do dates="$dates $(date -v-${i}d +%Y-%m-%d)"; done; else for i in {6..0}; do dates="$dates $(date -d "$i days ago" +%Y-%m-%d)"; done; fi; local max_min=0; declare -A day_sum; for d in $dates; do local s=$(awk -F',' -v d="$d" '$1==d {sum+=$3} END{print sum+0}' "$DATA_FILE"); day_sum[$d]=$s; if (( s > max_min )); then max_min=$s; fi; done; [ "$max_min" -eq 0 ] && max_min=1; for d in $dates; do local val=${day_sum[$d]}; local day_name=$(date -d "$d" +%a 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%a); local bar_len=$(( (val * 30) / max_min )); local bar=""; for ((i=0; i<bar_len; i++)); do bar+="█"; done; if [ "$val" -gt 0 ] && [ "$bar_len" -eq 0 ]; then bar="▌"; fi; local color=$c_success; if [ "$val" -gt 300 ]; then color=$c_accent; fi; if [ "$val" -gt 480 ]; then color=$c_warn; fi; local hours=$(echo "scale=1; $val / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $val/60}"); printf "  ${dim}%s %s${reset} | ${color}%-30s${reset} ${bold}%s h${reset}\n" "$d" "$day_name" "$bar" "$hours"; done; echo "  ──────────────────────────────────────────────────\n"; }
+show_chart() { echo -e "\n  ${bold}${c_accent}ACTIVITY CHART (Last 7 Days)${reset}\n  ──────────────────────────────────────────────────"; local dates=""; if [[ "$OSTYPE" == "darwin"* ]]; then for i in {6..0}; do dates="$dates $(date -v-${i}d +%Y-%m-%d)"; done; else for i in {6..0}; do dates="$dates $(date -d "$i days ago" +%Y-%m-%d)"; done; fi; local max_min=0; declare -A day_sum; for d in $dates; do local s=$(awk -F',' -v d="$d" '$1==d {sum+=$3} END{print sum+0}' "$DATA_FILE"); day_sum[$d]=$s; if (( s > max_min )); then max_min=$s; fi; done; [ "$max_min" -eq 0 ] && max_min=1; for d in $dates; do local val=${day_sum[$d]}; local day_name=$(date -d "$d" +%a 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%a); local bar_len=$(( (val * 30) / max_min )); local bar=""; for ((i=0; i<bar_len; i++)); do bar+="█"; done; if [ "$val" -gt 0 ] && [ "$bar_len" -eq 0 ]; then bar="▌"; fi; local color=$c_success; if [ "$val" -gt 300 ]; then color=$c_accent; fi; if [ "$val" -gt 480 ]; then color=$c_warn; fi; local hours=$(echo "scale=1; $val / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $val/60}"); printf "  ${dim}%s %s${reset} | ${color}%-30s${reset} ${bold}%s h${reset}\n" "$d" "$day_name" "$bar" "$hours"; done; echo -e "  ──────────────────────────────────────────────────\n"; }
 show_tags_report() { local filter="${1:-all}"; local start_date="1970-01-01"; local title="ALL-TIME TAGS"; case "$filter" in today) start_date=$(date +%Y-%m-%d); title="TODAY'S TAGS" ;; week) start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d); title="WEEKLY TAGS" ;; month) start_date=$(date +%Y-%m-01); title="MONTHLY TAGS" ;; esac; echo -e "\n  ${bold}${c_accent}$title${reset} ${dim}($filter)${reset}\n  ──────────────────────────────────────────────────"; awk -F',' -v s="$start_date" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= s { t = ($4 == "") ? "No Tag" : $4; sum[t] += $3; total += $3 } END { if (total==0) { print "  No data."; exit } for (t in sum) { pct = (sum[t]/total)*100; printf "  %-12s %3dh %02dm %s(%d%%)%s\n", substr(t,1,12), int(sum[t]/60), sum[t]%60, acc, pct, res } print ""; print "  TOTAL: " int(total/60) "h " total%60 "m" }' "$DATA_FILE" | sort -nr -k 2; echo ""; }
 show_weekly_report() { if [[ "$OSTYPE" == "darwin"* ]]; then local target_dow=$(date +%u); local diff=$((target_dow - 1)); local start_week=$(date -v-${diff}d +%Y-%m-%d); else local start_week=$(date -d "last monday" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d); if [ "$(date +%u)" -eq 1 ]; then start_week=$(date +%Y-%m-%d); fi; fi; echo -e "\n  ${bold}${c_accent}WEEKLY LOG${reset} ${dim}(Since $start_week)${reset}\n  ────────────────────────────────────────────────────────────"; printf "  ${bold}%-12s %-15s %-10s %-10s %s${reset}\n" "Date" "Project" "Time" "Tag" "Note"; echo "  ────────────────────────────────────────────────────────────"; awk -F',' -v start="$start_week" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= start { h = int($3/60); m = $3%60; time = sprintf("%dh %02dm", h, m); printf "  %-12s %-15s %-10s %-10s %s\n", $1, substr($2,1,14), time, substr($4,1,9), substr($5,1,25); total_min += $3 } END { print "  ────────────────────────────────────────────────────────────"; printf "  TOTAL: " acc "%.1f Hours" res "\n", total_min/60 }' "$DATA_FILE"; echo ""; }
 show_summary() { local filter="${1:-today}"; local global_goal=$(get_global_goal); (( global_goal == 0 )) && global_goal=8; local start_date=""; local title=""; local mode="range"; case "$filter" in today) start_date=$(date +%Y-%m-%d); title="TODAY'S INSIGHTS"; mode="exact" ;; yesterday) if [[ "$OSTYPE" == "darwin"* ]]; then start_date=$(date -v-1d +%Y-%m-%d); else start_date=$(date -d "yesterday" +%Y-%m-%d); fi; title="YESTERDAY'S SUMMARY"; mode="exact" ;; week) start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d); title="WEEKLY OVERVIEW"; mode="range" ;; month) start_date=$(date +%Y-%m-01); title="MONTHLY ANALYTICS"; mode="range" ;; ????-??-??) start_date="$filter"; title="SUMMARY FOR $filter"; mode="exact" ;; *) start_date="1970-01-01"; title="ALL-TIME STATISTICS"; mode="range" ;; esac; echo -e "\n  ${bold}${c_accent}$title${reset} ${dim}($filter)${reset}\n  ──────────────────────────────────────────────────"; awk -F',' -v s="$start_date" -v m="$mode" -v goal="$global_goal" -v arch_file="$ARCHIVE_FILE" -v acc="$c_accent" -v res="$reset" -v bld="$bold" -v suc="$c_success" -v clr_sub="$c_subtle" 'BEGIN { while((getline < arch_file) > 0) arch[$0]=1 } NR>1 { if (m == "exact" && $1 != s) next; if (m == "range" && $1 < s) next; p_name = $2; if (p_name in arch) p_name = "[Archived]"; sum[p_name] += $3; count++; total += $3; } END { if (total == 0) { print "  No data found for this period."; exit } if (m == "exact") { goal_m = goal * 60; pct = int((total * 100) / goal_m); if (pct > 100) pct = 100; width = 40; filled = int((pct * width) / 100); empty = width - filled; bar_str = ""; for(i=0; i<filled; i++) bar_str = bar_str "█"; empty_str = ""; for(i=0; i<empty; i++) empty_str = empty_str "░"; printf "  PROGRESS  %s%s%s%s %s%d%%%s\n\n", suc, bar_str, clr_sub, empty_str, bld, pct, res } print "  " bld "DISTRIBUTION" res; for (p in sum) { pct = (total > 0) ? (sum[p]/total)*100 : 0; bl = int(pct/5); bar=""; for(i=0;i<20;i++) bar = (i<bl) ? bar "█" : bar "░"; printf "  %-12s %3dh %02dm %s%s%s %3d%%\n", substr(p,1,12), int(sum[p]/60), sum[p]%60, acc, bar, res, pct } }' "$DATA_FILE" | sort -nr -k5; echo -e "  ──────────────────────────────────────────────────\n"; }
