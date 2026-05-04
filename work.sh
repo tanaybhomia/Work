@@ -220,6 +220,10 @@ run_session() {
         
         printf "\033[%d;1H\033[K%*s%b" "$menu_row" "$pad1" "" "${bold}${c_warn}TIMER PAUSED${reset}"
         printf "\033[%d;1H\033[K%*s%b" $((menu_row + 2)) "$pad2" "" "${bold}[P]${reset}ause   ${bold}[S]${reset}top   ${bold}[Space]${reset} Resume"
+
+        # Signal the GNOME panel extension that we are in the pause menu.
+        local menu_elapsed=$(( $(date +%s) - start_time - total_sleep_time ))
+        echo "$project,$menu_elapsed,$tag,$mode,$session_goal,$pomo_len" > "$PAUSED_FILE"
         
         while true; do
             IFS= read -r -s -n 1 key < /dev/tty
@@ -227,6 +231,13 @@ run_session() {
                 p|P) pause_session_internal ;;
                 s|S) save_and_exit ;;
                 c|C|$'\e'|" "|"") 
+                    # Resume — remove pause signal so panel goes back to running
+                    rm -f "$PAUSED_FILE"
+                    # Rewrite STATE_FILE with a virtual start_time so the extension
+                    # calculates elapsed correctly (now - virtual_start = menu_elapsed).
+                    # The bash loop still uses its own start_time + total_sleep_time.
+                    local virtual_start=$(( $(date +%s) - menu_elapsed ))
+                    echo "$project,$virtual_start,$tag,$mode,$$,$session_goal,$pomo_len" > "$STATE_FILE"
                     tput clear
                     draw_timer_screen "$elapsed" "$project" "$mode" "$pct" "$label" "$pomo_len"
                     break 

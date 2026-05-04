@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.worktracker"
+          path="/org/gnome/shell/extensions/worktracker/">
+
+    <key name="panel-position" type="s">
+      <default>'right'</default>
+      <summary>Panel Position</summary>
+      <description>Where to place the indicator in the top panel: 'left', 'center', or 'right'.</description>
+    </key>
+
+    <key name="show-project-name" type="b">
+      <default>true</default>
+      <summary>Show Project Name</summary>
+      <description>Whether to show the project name alongside the timer in the panel.</description>
+    </key>
+
+    <key name="show-when-idle" type="b">
+      <default>false</default>
+      <summary>Show When Idle</summary>
+      <description>Whether to show the indicator when no session is active.</description>
+    </key>
+
+  </schema>
+</schemalist>

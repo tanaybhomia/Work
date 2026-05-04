@@ -1,0 +1,9 @@
+{
+  "uuid": "worktracker@tanay",
+  "name": "Work Tracker",
+  "description": "Displays the Work Tracker terminal timer in the GNOME top panel with status indicator and quick controls.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1,
+  "url": "https://github.com/tanaybhomia/Work",
+  "settings-schema": "org.gnome.shell.extensions.worktracker"
+}
