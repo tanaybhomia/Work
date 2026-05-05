@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# -----------------------------------------------------
-# Work Tracker v13.0 (Clean Developer Edition - Spacebar Mod)
-# Features: Pomodoro, ETA, Switch, Auto-Backups, Archive
-# -----------------------------------------------------
+# ──────────────────────────────────────────────────────────────
+# Work Tracker  ·  v14.0
+# Terminal-native focus timer with GNOME panel integration.
+# ──────────────────────────────────────────────────────────────
 
 DATA_DIR="$HOME/.worktracker"
 DATA_FILE="$DATA_DIR/worklog.csv"
@@ -18,11 +18,26 @@ mkdir -p "$DATA_DIR"
 touch "$DATA_FILE" "$PROJ_GOAL_FILE" "$ARCHIVE_FILE"
 if [ ! -s "$DATA_FILE" ]; then echo "date,project,minutes,tag,note,start_time,end_time" > "$DATA_FILE"; fi
 
-# --- THEME ---
-bold=$(tput bold); dim=$(tput dim); reset=$(tput sgr0)
-c_accent=$(tput setaf 4); c_clock=$(tput setaf 5); c_subtle=$(tput setaf 8)
-c_success=$(tput setaf 2); c_warn=$(tput setaf 3); c_err=$(tput setaf 1)
-c_cyan=$(tput setaf 6)
+# ── Theme (256-color with 8-color fallback) ───────────────────────────────────
+bold=$(tput bold 2>/dev/null); dim=$(tput dim 2>/dev/null); reset=$(tput sgr0 2>/dev/null)
+_nc=$(tput colors 2>/dev/null || echo 8)
+if [ "${_nc:-8}" -ge 256 ] 2>/dev/null; then
+    c_accent=$(tput setaf 99)     # violet — GNOME purple
+    c_clock=$(tput setaf 99)      # same violet — visible on light AND dark
+    c_subtle=$(tput setaf 244)    # mid-gray (slightly darker for light-mode readability)
+    c_muted=$(tput setaf 240)     # dark gray
+    c_success=$(tput setaf 71)    # muted green — readable on light bg
+    c_warn=$(tput setaf 178)      # amber
+    c_err=$(tput setaf 160)       # red
+    c_cyan=$(tput setaf 74)       # muted cyan
+    c_bar_full=$(tput setaf 99)
+    c_bar_empty=$(tput setaf 237)
+else
+    c_accent=$(tput setaf 4);  c_clock=$(tput setaf 4);  c_subtle=$(tput setaf 8)
+    c_muted=$(tput setaf 8);   c_success=$(tput setaf 2); c_warn=$(tput setaf 3)
+    c_err=$(tput setaf 1);     c_cyan=$(tput setaf 6)
+    c_bar_full=$(tput setaf 4); c_bar_empty=$(tput setaf 8)
+fi
 
 # --- UTILS ---
 notify_user() {
@@ -46,7 +61,12 @@ play_sound() {
 }
 
 set_window_title() { echo -ne "\033]0;$1\007"; }
-format_time() { printf "%02d:%02d:%02d" $(($1/3600)) $(( ($1%3600)/60 )) $(($1%60)); }
+# Dynamic: MM:SS under 1 hour, HH:MM:SS at 1 hour+
+format_time() {
+    local t=$(( $1 < 0 ? 0 : $1 ))
+    local h=$(( t/3600 )) m=$(( (t%3600)/60 )) s=$(( t%60 ))
+    [ $h -gt 0 ] && printf "%02d:%02d:%02d" $h $m $s || printf "%02d:%02d" $m $s
+}
 
 # --- DATA HELPERS ---
 get_global_goal() { 
@@ -90,50 +110,39 @@ select_project() {
     else read -p "Project Name: " manual_name >&2; echo "$manual_name"; fi
 }
 
-# --- TIMER UI ---
+# ── Timer Display ─────────────────────────────────────────────────────────────
 draw_timer_screen() {
-    local elapsed=$1; local project=$2; local mode=$3; local pct=$4; local label=$5
-    local pomo_len="${6:-25}"
-    
-    local lines=$(tput lines); local cols=$(tput cols)
-    local center_row=$(( lines / 2 - 4 )); [ $center_row -lt 0 ] && center_row=0
+    local elapsed=$1 project=$2 mode=$3 pomo_len="${4:-25}"
+    local cols lines mid
+    cols=$(tput cols); lines=$(tput lines); mid=$(( lines / 2 ))
 
-    # Explicit centering to prevent ANSI-related right-shifting
-    print_c() { 
-        local row=$1; local text="$2"; local raw_len=$3
-        local pad=$(( (cols - raw_len) / 2 )); [ $pad -lt 0 ] && pad=0
-        printf "\033[%d;1H\033[K%*s%b" "$row" "$pad" "" "$text"
+    # _pc row ansi_text visible_len — centers text on that row
+    _pc() {
+        local pad=$(( (cols - $3) / 2 )); [ $pad -lt 0 ] && pad=0
+        printf "\033[%d;1H\033[2K%*s%b" "$1" "$pad" "" "$2"
     }
 
-    print_c $center_row "${dim}FOCUSING ON${reset}" 11
-    print_c $((center_row + 1)) "${bold}${c_accent}${project}${reset}" ${#project}
-    
-    local time_str=$(format_time $elapsed)
-    print_c $((center_row + 3)) "${bold}${c_clock}${time_str}${reset}" 8
+    local ts; ts=$(format_time "$elapsed")
 
-    local width=40; local filled=$(( (pct * width) / 100 )); local empty=$((width - filled))
-    local bar_str=""; for ((i=0; i<filled; i++)); do bar_str+="━"; done
-    local empty_str=""; for ((i=0; i<empty; i++)); do empty_str+="─"; done
-    
-    local lbl_str="${label} ${pct}%"
-    print_c $((center_row + 5)) "${c_subtle}${lbl_str}${reset}" ${#lbl_str}
-    print_c $((center_row + 6)) "${c_accent}${bar_str}${c_subtle}${empty_str}${reset}" $width
-    
-    local status_msg=""
-    local status_len=0
-    if [ "$mode" == "pomodoro" ]; then
-         local w_sec=$((pomo_len * 60))
-         local cycle_sec=$((w_sec + (pomo_len > 45 ? 600 : 300) ))
-         if (( (elapsed % cycle_sec) < w_sec )); then 
-            status_msg="${c_success}[WORK PHASE]${reset}"; status_len=12
-         else 
-            status_msg="${c_warn}[BREAK PHASE]${reset}"; status_len=13
-         fi
-    else 
-        status_msg="${dim}(Press SPACE to pause)${reset}"; status_len=22
+    _pc $(( mid - 4 )) "${c_subtle}f  o  c  u  s  i  n  g${reset}" 22
+    _pc $(( mid - 2 )) "${bold}${project}${reset}" ${#project}
+    _pc $(( mid ))     "${bold}${c_clock}${ts}${reset}" ${#ts}
+
+    # Pomodoro phase indicator or simple hint
+    local stxt slen
+    if [ "$mode" = "pomodoro" ]; then
+        local ws=$(( pomo_len * 60 )) brk=$(( pomo_len > 45 ? 600 : 300 ))
+        if (( (elapsed % (ws + brk)) < ws )); then
+            stxt="${c_success}●  work  ·  ${pomo_len}m${reset}"; slen=$(( 10 + ${#pomo_len} ))
+        else
+            local bm=$(( pomo_len > 45 ? 10 : 5 ))
+            stxt="${c_warn}●  break  ·  ${bm}m${reset}"; slen=$(( 11 + ${#bm} ))
+        fi
+    else
+        stxt="${c_muted}space to pause${reset}"; slen=14
     fi
-    print_c $((center_row + 8)) "$status_msg" $status_len
-    printf "\033[%d;1H" $lines
+    _pc $(( mid + 3 )) "$stxt" $slen
+    printf "\033[%d;1H" "$lines"
 }
 
 # --- SESSION RUNNER ---
@@ -155,14 +164,33 @@ run_session() {
 
     echo "$project,$start_time,$tag,$mode,$$,$session_goal,$pomo_len" > "$STATE_FILE"
     notify_user "[STARTED] $project"
-    
+
     tput civis; stty -echo -echoctl; tput clear
-    
+
     trap 'cleanup_term; remote_exit' SIGTERM
     trap 'cleanup_term; exit 1' SIGQUIT SIGABRT
-    trap 'confirm_exit' SIGINT SIGTSTP 
+    trap 'confirm_exit' SIGINT SIGTSTP
 
     cleanup_term() { tput cnorm; stty echo echoctl; }
+
+    # Auto-pause on system suspend — writes PAUSED_FILE without exiting
+    auto_suspend_pause() {
+        local sus_el=$(( $(date +%s) - start_time - total_sleep_time ))
+        echo "$project,$sus_el,$tag,$mode,$session_goal,$pomo_len" > "$PAUSED_FILE"
+    }
+    trap 'auto_suspend_pause' SIGUSR1
+
+    # Start background dbus-monitor to detect system suspend
+    if command -v dbus-monitor >/dev/null 2>&1; then
+        local _mp=$$
+        ( dbus-monitor --system \
+            "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'" \
+            2>/dev/null | while IFS= read -r _l; do
+              [[ "$_l" == *"bool true"* ]] && kill -USR1 "$_mp" 2>/dev/null
+          done ) &
+        local _wp=$!
+        trap "kill $_wp 2>/dev/null; cleanup_term; remote_exit" SIGTERM
+    fi
 
     pause_session_internal() {
         local current_elapsed=$(( $(date +%s) - start_time - total_sleep_time ))
@@ -208,39 +236,40 @@ run_session() {
     }
     
     confirm_exit() {
-        local lines=$(tput lines); local cols=$(tput cols)
-        local center_row=$(( lines / 2 - 4 )); [ $center_row -lt 0 ] && center_row=0
-        local menu_row=$((center_row + 8)) 
+        local cols lines mid
+        cols=$(tput cols); lines=$(tput lines); mid=$(( lines / 2 ))
+        local menu_row=$(( mid + 6 ))
 
-        # Clear menu area
-        for ((i=0; i<6; i++)); do printf "\033[%d;1H\033[K" $((menu_row + i)); done
-        
-        local pad1=$(( (cols - 12) / 2 )); [ $pad1 -lt 0 ] && pad1=0
-        local pad2=$(( (cols - 34) / 2 )); [ $pad2 -lt 0 ] && pad2=0
-        
-        printf "\033[%d;1H\033[K%*s%b" "$menu_row" "$pad1" "" "${bold}${c_warn}TIMER PAUSED${reset}"
-        printf "\033[%d;1H\033[K%*s%b" $((menu_row + 2)) "$pad2" "" "${bold}[P]${reset}ause   ${bold}[S]${reset}top   ${bold}[Space]${reset} Resume"
+        _cm() {
+            local pad=$(( (cols - $3) / 2 )); [ $pad -lt 0 ] && pad=0
+            printf "\033[%d;1H\033[2K%*s%b" "$1" "$pad" "" "$2"
+        }
 
-        # Signal the GNOME panel extension that we are in the pause menu.
         local menu_elapsed=$(( $(date +%s) - start_time - total_sleep_time ))
+        local ts; ts=$(format_time "$menu_elapsed")
+
+        # Overlay pause menu over the timer screen
+        _cm $((menu_row))     "${c_subtle}────────────────────────────────${reset}" 32
+        _cm $((menu_row + 1)) "${bold}⏸  paused${reset}" 9
+        _cm $((menu_row + 2)) "${c_subtle}────────────────────────────────${reset}" 32
+        _cm $((menu_row + 4)) "${c_subtle}p  save & exit    s  stop & save${reset}" 32
+        _cm $((menu_row + 5)) "${c_subtle}space / enter  →  resume${reset}" 22
+
+        # Write PAUSED_FILE so GNOME panel shows paused state
         echo "$project,$menu_elapsed,$tag,$mode,$session_goal,$pomo_len" > "$PAUSED_FILE"
-        
+
         while true; do
             IFS= read -r -s -n 1 key < /dev/tty
             case "$key" in
                 p|P) pause_session_internal ;;
                 s|S) save_and_exit ;;
                 c|C|$'\e'|" "|"") 
-                    # Resume — remove pause signal so panel goes back to running
                     rm -f "$PAUSED_FILE"
-                    # Rewrite STATE_FILE with a virtual start_time so the extension
-                    # calculates elapsed correctly (now - virtual_start = menu_elapsed).
-                    # The bash loop still uses its own start_time + total_sleep_time.
                     local virtual_start=$(( $(date +%s) - menu_elapsed ))
                     echo "$project,$virtual_start,$tag,$mode,$$,$session_goal,$pomo_len" > "$STATE_FILE"
                     tput clear
-                    draw_timer_screen "$elapsed" "$project" "$mode" "$pct" "$label" "$pomo_len"
-                    break 
+                    draw_timer_screen "$elapsed" "$project" "$mode" "$pomo_len"
+                    break
                     ;;
             esac
         done
@@ -254,7 +283,19 @@ run_session() {
     
     while true; do
         local now=$(date +%s); local tick_diff=$((now - last_tick))
-        if [ "$tick_diff" -gt 2 ]; then total_sleep_time=$((total_sleep_time + tick_diff - 1)); fi
+        if [ "$tick_diff" -gt 2 ]; then
+            total_sleep_time=$((total_sleep_time + tick_diff - 1))
+            # Post-suspend: clear the auto-pause signal and correct the panel timer
+            if [ "$tick_diff" -gt 30 ] && [ -f "$PAUSED_FILE" ]; then
+                rm -f "$PAUSED_FILE"
+                # Rewrite STATE_FILE with a virtual start so the panel calculates
+                # elapsed correctly (now - virtual_start = true elapsed, no sleep drift)
+                local _sus_elapsed=$(( now - start_time - total_sleep_time ))
+                local _virtual_start=$(( now - _sus_elapsed ))
+                echo "$project,$_virtual_start,$tag,$mode,$$,$session_goal,$pomo_len" > "$STATE_FILE"
+                notify_user "[RESUMED] Back to work on $project"
+            fi
+        fi
         last_tick=$now
         elapsed=$((now - start_time - total_sleep_time))
         
@@ -277,21 +318,8 @@ run_session() {
             last_pomo_state="$current_pomo_state"
         fi
 
-        local past_mins=0; local target_h=8; label="Daily Goal"
-        if [ -n "$session_goal" ]; then
-            past_mins=$(get_today_project_total "$project")
-            target_h="$session_goal"; label="Target: $project"
-        else
-            past_mins=$(get_today_total); target_h=$(get_global_goal)
-        fi
-        
-        local target_m=$(( target_h * 60 )); (( target_m == 0 )) && target_m=480
-        local total_curr_mins=$(( (elapsed / 60) + past_mins ))
-        pct=$(( (total_curr_mins * 100) / target_m ))
-        (( pct > 100 )) && pct=100
-
-        set_window_title "⏱ $(format_time $elapsed) - $project"
-        draw_timer_screen "$elapsed" "$project" "$mode" "$pct" "$label" "$pomo_len"
+        set_window_title "$(format_time $elapsed)  $project"
+        draw_timer_screen "$elapsed" "$project" "$mode" "$pomo_len"
         
         # New Spacebar listener
         IFS= read -r -s -t 1 -n 1 key < /dev/tty || true
@@ -338,55 +366,48 @@ show_timeflow() {
     echo ""
 }
 
-# --- NEW: LIVE DASHBOARD (CLEAN) ---
+# ── Live Dashboard ───────────────────────────────────────────────────────────
 show_dashboard() {
     tput civis; tput smcup; tput clear
     trap 'tput rmcup; tput cnorm; exit 0' SIGINT SIGTERM
-    
     while true; do
         tput cup 0 0
-        local out="\n  ${bold}LIVE DASHBOARD${reset}\n"
-        out+="  ──────────────────────────────────────────────────\n\n"
-        
-        local today_mins=$(get_today_total)
-        local goal=$(get_global_goal)
-        local goal_m=$(( goal * 60 ))
-        
-        if [ -f "$STATE_FILE" ]; then
-            IFS=',' read -r project start_time tag mode pid session_goal pomo_len < "$STATE_FILE"
-            local elapsed_sec=$(( $(date +%s) - start_time ))
-            out+="  STATUS  : ${bold}${c_success}RUNNING${reset}\n"
-            out+="  PROJECT : ${c_cyan}$project${reset}\n"
-            out+="  SESSION : $(format_time $elapsed_sec)\n"
-            today_mins=$(( today_mins + (elapsed_sec / 60) ))
+        local today_mins goal goal_m pct filled empty bar="" emp=""
+        today_mins=$(get_today_total); goal=$(get_global_goal); goal_m=$(( goal * 60 ))
+        local status_txt project_txt session_txt
+        if [ -f "$STATE_FILE" ] && [ ! -f "$PAUSED_FILE" ]; then
+            IFS=',' read -r _proj _st _tag _mode _pid _sg _pl < "$STATE_FILE"
+            local _es=$(( $(date +%s) - _st ))
+            status_txt="${c_success}●  running${reset}"
+            project_txt="${bold}${_proj}${reset}"
+            session_txt="$(format_time $_es)"
+            today_mins=$(( today_mins + _es / 60 ))
         elif [ -f "$PAUSED_FILE" ]; then
-            IFS=',' read -r project elapsed tag mode session_goal pomo_len < "$PAUSED_FILE"
-            out+="  STATUS  : ${bold}${c_warn}PAUSED${reset}\n"
-            out+="  PROJECT : ${c_cyan}$project${reset}\n"
-            out+="  SESSION : $(format_time $elapsed)\n"
-            today_mins=$(( today_mins + (elapsed / 60) ))
+            IFS=',' read -r _proj _el _tag _mode _sg _pl < "$PAUSED_FILE"
+            status_txt="${c_warn}⏸  paused${reset}"
+            project_txt="${bold}${_proj}${reset}"
+            session_txt="$(format_time $_el)"
+            today_mins=$(( today_mins + _el / 60 ))
         else
-            out+="  STATUS  : ${dim}IDLE${reset}\n"
-            out+="  PROJECT : -\n"
-            out+="  SESSION : 00:00:00\n"
+            status_txt="${c_subtle}○  idle${reset}"
+            project_txt="${c_subtle}—${reset}"
+            session_txt="${c_subtle}—${reset}"
         fi
-        
-        local pct=$(( (today_mins * 100) / goal_m ))
+        pct=$(( goal_m > 0 ? (today_mins * 100) / goal_m : 0 ))
         [ $pct -gt 100 ] && pct=100
-        local width=40
-        local filled=$(( (pct * width) / 100 ))
-        local empty=$(( width - filled ))
-        local bar_str=""; for((i=0; i<filled; i++)); do bar_str+="█"; done
-        local empty_str=""; for((i=0; i<empty; i++)); do empty_str+="░"; done
-        
-        out+="\n  PROGRESS: $((today_mins/60))h $((today_mins%60))m / ${goal}h (${pct}%)\n"
-        out+="  ${c_accent}${bar_str}${c_subtle}${empty_str}${reset}\n"
-        out+="\n  ──────────────────────────────────────────────────\n"
-        
-        echo -e "$out"
+        local bw=36; filled=$(( pct * bw / 100 )); empty=$(( bw - filled ))
+        for ((i=0; i<filled; i++)); do bar+="▓"; done
+        for ((i=0; i<empty;  i++)); do emp+="░"; done
+        printf "\n  ${bold}Dashboard${reset}  ${c_subtle}·  %s${reset}\n" "$(date +'%a %d %b  %H:%M')"
+        printf "  ${c_subtle}────────────────────────────────────────${reset}\n\n"
+        printf "  Status   %b\n" "$status_txt"
+        printf "  Project  %b\n" "$project_txt"
+        printf "  Session  %b\n\n" "$session_txt"
+        printf "  Today    ${bold}%dh %dm${reset}  ${c_subtle}/ %dh${reset}\n" "$(( today_mins/60 ))" "$(( today_mins%60 ))" "$goal"
+        printf "  ${c_bar_full}%s${c_bar_empty}%s${reset}  ${c_subtle}%d%%${reset}\n\n" "$bar" "$emp" "$pct"
+        printf "  ${c_subtle}────────────────────────────────────────${reset}\n"
         show_timeflow "$(date +%Y-%m-%d)"
-        tput ed 
-        sleep 1
+        tput ed; sleep 1
     done
 }
 
@@ -443,40 +464,120 @@ list_projects() {
 show_chart() { echo -e "\n  ${bold}${c_accent}ACTIVITY CHART (Last 7 Days)${reset}\n  ──────────────────────────────────────────────────"; local dates=""; if [[ "$OSTYPE" == "darwin"* ]]; then for i in {6..0}; do dates="$dates $(date -v-${i}d +%Y-%m-%d)"; done; else for i in {6..0}; do dates="$dates $(date -d "$i days ago" +%Y-%m-%d)"; done; fi; local max_min=0; declare -A day_sum; for d in $dates; do local s=$(awk -F',' -v d="$d" '$1==d {sum+=$3} END{print sum+0}' "$DATA_FILE"); day_sum[$d]=$s; if (( s > max_min )); then max_min=$s; fi; done; [ "$max_min" -eq 0 ] && max_min=1; for d in $dates; do local val=${day_sum[$d]}; local day_name=$(date -d "$d" +%a 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%a); local bar_len=$(( (val * 30) / max_min )); local bar=""; for ((i=0; i<bar_len; i++)); do bar+="█"; done; if [ "$val" -gt 0 ] && [ "$bar_len" -eq 0 ]; then bar="▌"; fi; local color=$c_success; if [ "$val" -gt 300 ]; then color=$c_accent; fi; if [ "$val" -gt 480 ]; then color=$c_warn; fi; local hours=$(echo "scale=1; $val / 60" | bc 2>/dev/null || awk "BEGIN {printf \"%.1f\", $val/60}"); printf "  ${dim}%s %s${reset} | ${color}%-30s${reset} ${bold}%s h${reset}\n" "$d" "$day_name" "$bar" "$hours"; done; echo -e "  ──────────────────────────────────────────────────\n"; }
 show_tags_report() { local filter="${1:-all}"; local start_date="1970-01-01"; local title="ALL-TIME TAGS"; case "$filter" in today) start_date=$(date +%Y-%m-%d); title="TODAY'S TAGS" ;; week) start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d); title="WEEKLY TAGS" ;; month) start_date=$(date +%Y-%m-01); title="MONTHLY TAGS" ;; esac; echo -e "\n  ${bold}${c_accent}$title${reset} ${dim}($filter)${reset}\n  ──────────────────────────────────────────────────"; awk -F',' -v s="$start_date" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= s { t = ($4 == "") ? "No Tag" : $4; sum[t] += $3; total += $3 } END { if (total==0) { print "  No data."; exit } for (t in sum) { pct = (sum[t]/total)*100; printf "  %-12s %3dh %02dm %s(%d%%)%s\n", substr(t,1,12), int(sum[t]/60), sum[t]%60, acc, pct, res } print ""; print "  TOTAL: " int(total/60) "h " total%60 "m" }' "$DATA_FILE" | sort -nr -k 2; echo ""; }
 show_weekly_report() { if [[ "$OSTYPE" == "darwin"* ]]; then local target_dow=$(date +%u); local diff=$((target_dow - 1)); local start_week=$(date -v-${diff}d +%Y-%m-%d); else local start_week=$(date -d "last monday" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d); if [ "$(date +%u)" -eq 1 ]; then start_week=$(date +%Y-%m-%d); fi; fi; echo -e "\n  ${bold}${c_accent}WEEKLY LOG${reset} ${dim}(Since $start_week)${reset}\n  ────────────────────────────────────────────────────────────"; printf "  ${bold}%-12s %-15s %-10s %-10s %s${reset}\n" "Date" "Project" "Time" "Tag" "Note"; echo "  ────────────────────────────────────────────────────────────"; awk -F',' -v start="$start_week" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= start { h = int($3/60); m = $3%60; time = sprintf("%dh %02dm", h, m); printf "  %-12s %-15s %-10s %-10s %s\n", $1, substr($2,1,14), time, substr($4,1,9), substr($5,1,25); total_min += $3 } END { print "  ────────────────────────────────────────────────────────────"; printf "  TOTAL: " acc "%.1f Hours" res "\n", total_min/60 }' "$DATA_FILE"; echo ""; }
-show_summary() { local filter="${1:-today}"; local global_goal=$(get_global_goal); (( global_goal == 0 )) && global_goal=8; local start_date=""; local title=""; local mode="range"; case "$filter" in today) start_date=$(date +%Y-%m-%d); title="TODAY'S INSIGHTS"; mode="exact" ;; yesterday) if [[ "$OSTYPE" == "darwin"* ]]; then start_date=$(date -v-1d +%Y-%m-%d); else start_date=$(date -d "yesterday" +%Y-%m-%d); fi; title="YESTERDAY'S SUMMARY"; mode="exact" ;; week) start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d); title="WEEKLY OVERVIEW"; mode="range" ;; month) start_date=$(date +%Y-%m-01); title="MONTHLY ANALYTICS"; mode="range" ;; ????-??-??) start_date="$filter"; title="SUMMARY FOR $filter"; mode="exact" ;; *) start_date="1970-01-01"; title="ALL-TIME STATISTICS"; mode="range" ;; esac; echo -e "\n  ${bold}${c_accent}$title${reset} ${dim}($filter)${reset}\n  ──────────────────────────────────────────────────"; awk -F',' -v s="$start_date" -v m="$mode" -v goal="$global_goal" -v arch_file="$ARCHIVE_FILE" -v acc="$c_accent" -v res="$reset" -v bld="$bold" -v suc="$c_success" -v clr_sub="$c_subtle" 'BEGIN { while((getline < arch_file) > 0) arch[$0]=1 } NR>1 { if (m == "exact" && $1 != s) next; if (m == "range" && $1 < s) next; p_name = $2; if (p_name in arch) p_name = "[Archived]"; sum[p_name] += $3; count++; total += $3; } END { if (total == 0) { print "  No data found for this period."; exit } if (m == "exact") { goal_m = goal * 60; pct = int((total * 100) / goal_m); if (pct > 100) pct = 100; width = 40; filled = int((pct * width) / 100); empty = width - filled; bar_str = ""; for(i=0; i<filled; i++) bar_str = bar_str "█"; empty_str = ""; for(i=0; i<empty; i++) empty_str = empty_str "░"; printf "  PROGRESS  %s%s%s%s %s%d%%%s\n\n", suc, bar_str, clr_sub, empty_str, bld, pct, res } print "  " bld "DISTRIBUTION" res; for (p in sum) { pct = (total > 0) ? (sum[p]/total)*100 : 0; bl = int(pct/5); bar=""; for(i=0;i<20;i++) bar = (i<bl) ? bar "█" : bar "░"; printf "  %-12s %3dh %02dm %s%s%s %3d%%\n", substr(p,1,12), int(sum[p]/60), sum[p]%60, acc, bar, res, pct } }' "$DATA_FILE" | sort -nr -k5; echo -e "  ──────────────────────────────────────────────────\n"; }
+show_summary() {
+    local filter="${1:-today}"
+    local global_goal; global_goal=$(get_global_goal)
+    (( global_goal == 0 )) && global_goal=8
+    local start_date="" title="" mode="range"
 
-# --- NEW: BLINGED HELP MENU ---
+    case "$filter" in
+        today)
+            start_date=$(date +%Y-%m-%d); title="today's insights"; mode="exact" ;;
+        yesterday)
+            if [[ "$OSTYPE" == "darwin"* ]]; then start_date=$(date -v-1d +%Y-%m-%d)
+            else start_date=$(date -d "yesterday" +%Y-%m-%d); fi
+            title="yesterday's summary"; mode="exact" ;;
+        week)
+            start_date=$([[ "$OSTYPE" == "darwin"* ]] && date -v-Sun +%Y-%m-%d || date -d "last sunday" +%Y-%m-%d)
+            title="this week"; mode="range" ;;
+        month)
+            start_date=$(date +%Y-%m-01); title="this month"; mode="range" ;;
+        ????-??-??)
+            start_date="$filter"; title="$filter"; mode="exact" ;;
+        *)
+            start_date="1970-01-01"; title="all time"; mode="range" ;;
+    esac
+
+    printf "\n  ${bold}%s${reset}  ${c_subtle}%s${reset}\n" "$title" "$filter"
+    printf "  ${c_subtle}%s${reset}\n\n" "──────────────────────────────────────────"
+
+    awk -F',' \
+        -v s="$start_date" \
+        -v m="$mode" \
+        -v goal="$global_goal" \
+        -v arch_file="$ARCHIVE_FILE" \
+        -v _acc="$c_accent" \
+        -v _res="$reset" \
+        -v _bld="$bold" \
+        -v _suc="$c_success" \
+        -v _sub="$c_subtle" \
+        -v _mut="$c_muted" \
+        -v _bf="$c_bar_full" \
+        -v _be="$c_bar_empty" \
+    'BEGIN { while((getline < arch_file) > 0) arch[$0]=1 }
+    NR>1 {
+        if (m == "exact" && $1 != s) next
+        if (m == "range" && $1 < s)  next
+        p = $2; if (p in arch) p = "archived"
+        sum[p] += $3; total += $3
+        if (!order[p]) { order_arr[++n] = p; order[p] = 1 }
+    }
+    END {
+        if (total == 0) { print "  " _sub "no data for this period." _res; exit }
+
+        # Daily goal progress bar (exact mode only)
+        if (m == "exact") {
+            goal_m = goal * 60
+            pct = int((total * 100) / goal_m)
+            if (pct > 100) pct = 100
+            bw = 36
+            filled = int((pct * bw) / 100); empty = bw - filled
+            bar = ""; for(i=0; i<filled; i++) bar = bar "\xe2\x96\x93"
+            emp = ""; for(i=0; i<empty;  i++) emp = emp "\xe2\x96\x91"
+            printf "  %sdaily goal%s\n", _bld, _res
+            printf "  %s%s%s%s%s  %s%d%%%s\n\n", _bf, bar, _be, emp, _res, _sub, pct, _res
+        }
+
+        # Distribution
+        printf "  %sdistribution%s\n", _bld, _res
+        # Sort by minutes descending
+        n2 = asort(sum, sorted_vals, "@val_num_desc") + 0
+        # Build reverse map val->name (simple approach: iterate order_arr)
+        for (i = 1; i <= n; i++) {
+            p = order_arr[i]
+            pct = (total > 0) ? int((sum[p] / total) * 100) : 0
+            bw = 24
+            bl = int((pct * bw) / 100)
+            bar = ""; for(j=0; j<bl;  j++) bar = bar "\xe2\x96\x93"
+            emp = ""; for(j=bl; j<bw; j++) emp = emp "\xe2\x96\x91"
+            h = int(sum[p]/60); mn = sum[p] % 60
+            printf "  %-16s  %2dh %02dm  %s%s%s%s  %s%2d%%%s\n",
+                substr(p,1,16), h, mn, _bf, bar, _be, emp, _sub, pct, _res
+        }
+        printf "\n  %s──────────────────────────────────────────%s\n", _sub, _res
+        printf "  total  %s%dh %02dm%s\n\n", _bld, int(total/60), total%60, _res
+    }' "$DATA_FILE"
+}
+
+# ── Help ─────────────────────────────────────────────────────────────
 show_help() {
-    tput clear
-    echo -e "${c_accent}"
-    cat << "EOF"
-  _       __           __   ______               __           
- | |     / /___  _____/ /_ /_  __/________ _____/ /_____  _____
- | | /| / / __ \/ ___/ //_/ / / / ___/ __ `/ ___/ //_/ _ \/ ___/
- | |/ |/ / /_/ / /  / ,<   / / / /  / /_/ / /__/ ,< /  __/ /    
- |__/|__/\____/_/  /_/|_| /_/ /_/   \__,_/\___/_/|_|\___/_/     
-EOF
-    echo -e "${reset}"
-    echo -e "    ${dim}v13.0 - Developer Edition${reset}\n"
-    
-    echo -e "    ${bold}CORE COMMANDS${reset}"
-    echo -e "      ${c_success}start${reset} [proj]    Start timer. ${dim}(Flags: --pomo 50, --tag coding)${reset}"
-    echo -e "      ${c_success}stop${reset}            End session, add note, and trigger auto-backup."
-    echo -e "      ${c_success}switch${reset} [proj]   Instantly jump to a new project."
-    echo -e "      ${c_success}pause / resume${reset}  Pause or resume the current session.\n"
+    printf "\n  ${bold}Work Tracker${reset}  ${c_subtle}·  v14.0${reset}\n"
+    printf "  ${c_subtle}────────────────────────────────────────────${reset}\n\n"
 
-    echo -e "    ${bold}VIEWS & STATS${reset}"
-    echo -e "      ${c_accent}dash${reset}            Open the live dashboard (running timer + daily progress)."
-    echo -e "      ${c_accent}day${reset} [date]      View timeflow (e.g., 'yesterday' or '2303' for 23rd Mar)."
-    echo -e "      ${c_accent}eta${reset}             Predicts exactly when you can clock out."
-    echo -e "      ${c_accent}summary${reset} [rng]   Data breakdowns for: today, yesterday, week, month."
-    echo -e "      ${c_accent}chart / tags${reset}    Visual 7-day graphs and tag analysis.\n"
+    printf "  ${bold}TIMER${reset}\n"
+    printf "    ${c_success}start${reset} [project]     Begin a session  ${c_subtle}--pomo N  --tag T  --goal N${reset}\n"
+    printf "    ${c_success}stop${reset}                Save with a note and auto-backup\n"
+    printf "    ${c_success}pause${reset} / ${c_success}resume${reset}      Suspend or continue\n"
+    printf "    ${c_success}switch${reset} [project]    Save current, jump to new\n\n"
 
-    echo -e "    ${bold}MANAGEMENT${reset}"
-    echo -e "      ${c_warn}archive${reset} [p...]  Hide old projects from your main menus."
-    echo -e "      ${c_warn}projects${reset}        List all Active and Archived projects."
-    echo -e "      ${c_warn}edit${reset}            Open the raw CSV log in Nano/Vim."
-    echo -e "      ${c_warn}undo${reset}            Delete the very last entry you made.\n"
+    printf "  ${bold}VIEWS${reset}\n"
+    printf "    ${c_accent}dash${reset}                Live dashboard\n"
+    printf "    ${c_accent}day${reset} [date]           Timeline  ${c_subtle}today · yesterday · 2305 (23 May)${reset}\n"
+    printf "    ${c_accent}eta${reset}                 Estimated finish time\n"
+    printf "    ${c_accent}summary${reset} [range]      today · yesterday · week · month\n"
+    printf "    ${c_accent}chart${reset}               7-day activity chart\n"
+    printf "    ${c_accent}tags${reset} [range]         Tag breakdown\n"
+    printf "    ${c_accent}week${reset}                Weekly log\n\n"
+
+    printf "  ${bold}MANAGE${reset}\n"
+    printf "    ${c_warn}projects${reset}             List all active and archived projects\n"
+    printf "    ${c_warn}archive${reset} [name]        Archive a project\n"
+    printf "    ${c_warn}goal set${reset} [p] [N]      Per-project daily goal in hours\n"
+    printf "    ${c_warn}goal global${reset} [N]       Global daily goal\n"
+    printf "    ${c_warn}edit${reset}                 Open raw CSV in \$EDITOR\n"
+    printf "    ${c_warn}undo${reset}                 Delete last entry\n\n"
+
+    printf "  ${c_subtle}────────────────────────────────────────────${reset}\n\n"
 }
 
 # --- CONTROLLER ---
