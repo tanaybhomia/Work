@@ -9,7 +9,7 @@ DATA_DIR="$HOME/.worktracker"
 DATA_FILE="$DATA_DIR/worklog.csv"
 STATE_FILE="$DATA_DIR/.state"
 PAUSED_FILE="$DATA_DIR/.paused"
-GLOBAL_GOAL_FILE="$DATA_DIR/.global_goal"
+
 PROJ_GOAL_FILE="$DATA_DIR/.project_goals"
 ARCHIVE_FILE="$DATA_DIR/.archived"
 
@@ -69,10 +69,6 @@ format_time() {
 }
 
 # --- DATA HELPERS ---
-get_global_goal() { 
-    local g=$(cat "$GLOBAL_GOAL_FILE" 2>/dev/null)
-    [[ "$g" =~ ^[0-9]+$ ]] && echo "$g" || echo "8" 
-}
 get_project_goal() {
     local g=$(grep "^$1," "$PROJ_GOAL_FILE" 2>/dev/null | cut -d',' -f2)
     [[ "$g" =~ ^[0-9]+$ ]] && echo "$g" || echo ""
@@ -372,9 +368,8 @@ show_dashboard() {
     trap 'tput rmcup; tput cnorm; exit 0' SIGINT SIGTERM
     while true; do
         tput cup 0 0
-        local today_mins goal goal_m pct filled empty bar="" emp=""
-        today_mins=$(get_today_total); goal=$(get_global_goal); goal_m=$(( goal * 60 ))
-        local status_txt project_txt session_txt
+        local today_mins status_txt project_txt session_txt
+        today_mins=$(get_today_total)
         if [ -f "$STATE_FILE" ] && [ ! -f "$PAUSED_FILE" ]; then
             IFS=',' read -r _proj _st _tag _mode _pid _sg _pl < "$STATE_FILE"
             local _es=$(( $(date +%s) - _st ))
@@ -393,18 +388,12 @@ show_dashboard() {
             project_txt="${c_subtle}—${reset}"
             session_txt="${c_subtle}—${reset}"
         fi
-        pct=$(( goal_m > 0 ? (today_mins * 100) / goal_m : 0 ))
-        [ $pct -gt 100 ] && pct=100
-        local bw=36; filled=$(( pct * bw / 100 )); empty=$(( bw - filled ))
-        for ((i=0; i<filled; i++)); do bar+="▓"; done
-        for ((i=0; i<empty;  i++)); do emp+="░"; done
         printf "\n  ${bold}Dashboard${reset}  ${c_subtle}·  %s${reset}\n" "$(date +'%a %d %b  %H:%M')"
         printf "  ${c_subtle}────────────────────────────────────────${reset}\n\n"
         printf "  Status   %b\n" "$status_txt"
         printf "  Project  %b\n" "$project_txt"
         printf "  Session  %b\n\n" "$session_txt"
-        printf "  Today    ${bold}%dh %dm${reset}  ${c_subtle}/ %dh${reset}\n" "$(( today_mins/60 ))" "$(( today_mins%60 ))" "$goal"
-        printf "  ${c_bar_full}%s${c_bar_empty}%s${reset}  ${c_subtle}%d%%${reset}\n\n" "$bar" "$emp" "$pct"
+        printf "  Today    ${bold}%dh %dm${reset}\n\n" "$(( today_mins/60 ))" "$(( today_mins%60 ))"
         printf "  ${c_subtle}────────────────────────────────────────${reset}\n"
         show_timeflow "$(date +%Y-%m-%d)"
         tput ed; sleep 1
@@ -466,8 +455,6 @@ show_tags_report() { local filter="${1:-all}"; local start_date="1970-01-01"; lo
 show_weekly_report() { if [[ "$OSTYPE" == "darwin"* ]]; then local target_dow=$(date +%u); local diff=$((target_dow - 1)); local start_week=$(date -v-${diff}d +%Y-%m-%d); else local start_week=$(date -d "last monday" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d); if [ "$(date +%u)" -eq 1 ]; then start_week=$(date +%Y-%m-%d); fi; fi; echo -e "\n  ${bold}${c_accent}WEEKLY LOG${reset} ${dim}(Since $start_week)${reset}\n  ────────────────────────────────────────────────────────────"; printf "  ${bold}%-12s %-15s %-10s %-10s %s${reset}\n" "Date" "Project" "Time" "Tag" "Note"; echo "  ────────────────────────────────────────────────────────────"; awk -F',' -v start="$start_week" -v acc="$c_accent" -v res="$reset" 'NR>1 && $1 >= start { h = int($3/60); m = $3%60; time = sprintf("%dh %02dm", h, m); printf "  %-12s %-15s %-10s %-10s %s\n", $1, substr($2,1,14), time, substr($4,1,9), substr($5,1,25); total_min += $3 } END { print "  ────────────────────────────────────────────────────────────"; printf "  TOTAL: " acc "%.1f Hours" res "\n", total_min/60 }' "$DATA_FILE"; echo ""; }
 show_summary() {
     local filter="${1:-today}"
-    local global_goal; global_goal=$(get_global_goal)
-    (( global_goal == 0 )) && global_goal=8
     local start_date="" title="" mode="range"
 
     case "$filter" in
@@ -494,7 +481,6 @@ show_summary() {
     awk -F',' \
         -v s="$start_date" \
         -v m="$mode" \
-        -v goal="$global_goal" \
         -v arch_file="$ARCHIVE_FILE" \
         -v _acc="$c_accent" \
         -v _res="$reset" \
@@ -515,18 +501,6 @@ show_summary() {
     END {
         if (total == 0) { print "  " _sub "no data for this period." _res; exit }
 
-        # Daily goal progress bar (exact mode only)
-        if (m == "exact") {
-            goal_m = goal * 60
-            pct = int((total * 100) / goal_m)
-            if (pct > 100) pct = 100
-            bw = 36
-            filled = int((pct * bw) / 100); empty = bw - filled
-            bar = ""; for(i=0; i<filled; i++) bar = bar "\xe2\x96\x93"
-            emp = ""; for(i=0; i<empty;  i++) emp = emp "\xe2\x96\x91"
-            printf "  %sdaily goal%s\n", _bld, _res
-            printf "  %s%s%s%s%s  %s%d%%%s\n\n", _bf, bar, _be, emp, _res, _sub, pct, _res
-        }
 
         # Distribution
         printf "  %sdistribution%s\n", _bld, _res
@@ -572,8 +546,7 @@ show_help() {
     printf "  ${bold}MANAGE${reset}\n"
     printf "    ${c_warn}projects${reset}             List all active and archived projects\n"
     printf "    ${c_warn}archive${reset} [name]        Archive a project\n"
-    printf "    ${c_warn}goal set${reset} [p] [N]      Per-project daily goal in hours\n"
-    printf "    ${c_warn}goal global${reset} [N]       Global daily goal\n"
+    printf "    ${c_warn}goal set${reset} [p] [N]      Per-project daily goal in hours\n\n"
     printf "    ${c_warn}edit${reset}                 Open raw CSV in \$EDITOR\n"
     printf "    ${c_warn}undo${reset}                 Delete last entry\n\n"
 
@@ -626,21 +599,14 @@ case "$1" in
     day|timeflow) show_timeflow "$2" ;;
 
     eta)
-        global_goal=$(get_global_goal); today_mins=$(get_today_total)
+        local today_mins; today_mins=$(get_today_total)
         if [ -f "$STATE_FILE" ]; then
             IFS=',' read -r _ start _ _ _ _ _ < "$STATE_FILE"
             today_mins=$((today_mins + (($(date +%s) - start) / 60)))
         fi
-        goal_mins=$((global_goal * 60)); remaining=$((goal_mins - today_mins))
-        echo -e "\n  ${bold}ESTIMATED FINISH TIME${reset}\n  ──────────────────────────"
-        echo "  Goal:      ${global_goal}h ($goal_mins m)"
-        echo "  Completed: $((today_mins/60))h $((today_mins%60))m"
-        if [ "$remaining" -le 0 ]; then echo -e "  ${c_success}[GOAL MET] You are technically free.${reset}\n"
-        else
-            finish_time=$([[ "$OSTYPE" == "darwin"* ]] && date -v+${remaining}M +%I:%M%p || date -d "+$remaining minutes" +%I:%M%p)
-            echo "  Remaining: ${remaining} m"
-            echo -e "  Clock Out: ${bold}${c_accent}$finish_time${reset}\n"
-        fi ;;
+        printf "\n  ${bold}Today${reset}\n"
+        printf "  ${c_subtle}──────────────────────────${reset}\n"
+        printf "  Tracked  ${bold}%dh %dm${reset}\n\n" "$(( today_mins/60 ))" "$(( today_mins%60 ))" ;;
 
     archive)
         shift
@@ -738,7 +704,6 @@ case "$1" in
             if [ -z "$2" ] || [ -z "$3" ]; then echo "Usage: work goal set [Project] [Hours]"; exit 1; fi
             if [[ "$OSTYPE" == "darwin"* ]]; then sed -i '' "/^$2,/d" "$PROJ_GOAL_FILE"; else sed -i "/^$2,/d" "$PROJ_GOAL_FILE"; fi
             echo "$2,$3" >> "$PROJ_GOAL_FILE"; echo "[OK] Goal set: $2 = $3 hours/day"
-        elif [ "$1" == "global" ]; then echo "$2" > "$GLOBAL_GOAL_FILE"; echo "[OK] Global Goal set to $2 hours"
         else show_help; fi ;;
         
     chart) show_chart ;;
