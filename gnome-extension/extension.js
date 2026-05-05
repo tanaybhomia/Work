@@ -31,12 +31,15 @@ function readFileSync(path) {
     }
 }
 
+// Dynamic: MM:SS under 1 hour, HH:MM:SS at 1 hour+ (matches work.sh format_time)
 function formatTime(seconds) {
     seconds = Math.max(0, Math.floor(seconds));
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (h > 0)
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
 // ─── Indicator ───────────────────────────────────────────────────────────────
